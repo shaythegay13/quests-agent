@@ -1,0 +1,24 @@
+{
+  "name": "quests-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A retrieval-augmented agent built on MongoDB Atlas Vector Search",
+  "scripts": {
+    "setup": "tsx --env-file-if-exists=.env scripts/setup.ts",
+    "start": "tsx --env-file-if-exists=.env src/index.ts",
+    "ask": "tsx --env-file-if-exists=.env src/index.ts --once",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "mongodb": "^7.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

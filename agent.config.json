@@ -1,0 +1,31 @@
+{
+  "agent": {
+    "name": "Maggie",
+    "face": "🤖",
+    "model": "gpt-5.6-luna"
+  },
+  "systemPrompt": "You are Maggie, a helpful agent with a memory stored in MongoDB Atlas. You answer from what you remember, and you say so plainly when you do not know something.",
+  "customInstructions": "",
+  "skills": [
+    "mongodb-fundamentals",
+    "vector-search",
+    "agent-memory",
+    "prompt-context-engineering",
+    "coding-debugging"
+  ],
+  "database": {
+    "dbName": "quests-a7640941cf2c45eaa695aefb",
+    "collection": "teas",
+    "indexName": "tea_vector_index",
+    "vectorPath": "search.embeddings"
+  },
+  "embedding": {
+    "model": "voyage-4",
+    "dimensions": 512
+  },
+  "player": {
+    "codename": "Chinchilla-Scout",
+    "questsCompleted": 4,
+    "score": 78
+  }
+}
