@@ -1,113 +1,141 @@
-# 🤖 Maggie
+# Maggie
 
-Your agent from the MongoDB quest, as a repository you own.
+Maggie is a command-line retrieval-augmented agent. It embeds a question, searches memories with MongoDB Atlas Vector Search, and either prints those matches or asks an OpenAI-compatible chat model to answer from them.
 
-It is small on purpose — retrieval is `src/retrieve.ts`, generation is `src/llm.ts`, and the
-agent itself is about twenty lines in `src/agent.ts`. Once the vectors are the right shape
-and the index exists, an agent is not a large thing. The rest of this file is about getting
-it running against a cluster that is yours.
+This repository is a public portfolio snapshot from a MongoDB quest on September 30, 2026. The owner built it during a day-long conference. It is not a deployed service. The CLI exits before the prompt unless `MONGODB_URI` and `VOYAGE_API_KEY` are set, so this README does not include a session screenshot.
 
-Built by **Chinchilla-Scout** · 4 quests · 78 points · 2026-09-30
+## What it does
 
-## Run it
+`npm start` opens a prompt. A line of text is a question. These commands are handled in `src/index.ts`:
 
-You need a MongoDB cluster and a Voyage key. Both have free tiers, and the whole setup is
-four commands:
+- `/remember <key> <fact>` stores one fact. The key is the first word after `/remember`; the rest of the line is the fact. The fact is embedded and upserted on `key`.
+- `/exit` and `/quit` close the prompt.
+- `npm run ask -- "question"` asks once and exits.
+
+For each question, `src/agent.ts` calls `retrieve()`:
+
+1. Voyage embeds the question (`input_type: query`).
+2. The `teas` collection is queried with `$vectorSearch` on `search.embeddings`.
+3. Each hit keeps a key (`key`, or `id` if there is no key), text (`fact`, or `search.text` if there is no fact), and the `vectorSearchScore`. Hits with no text are dropped.
+
+The query is written to return two document shapes from that one collection: memories stored by this agent (`key` and `fact`) and quest-corpus documents whose text lives at `search.text`. This repository does not include that corpus. `memory.seed.json` is an empty array, so a fresh setup stores no memories until facts are added there or with `/remember`.
+
+If `LLM_API_KEY` is set, the matches are placed in the system prompt and `src/llm.ts` POSTs them to `{LLM_BASE_URL}/chat/completions`. The CLI then prints the reply and, when there are hits, a `recalled:` line of keys. If `LLM_API_KEY` is unset, the CLI prints the scores and facts and does not print that `recalled:` line. `src/llm.ts` uses temperature `0.3`.
+
+The names in `agent.config.json` under `skills` are inserted into the system prompt as text. This repository does not implement those skills as tools.
+
+`npm run setup` is idempotent. It creates the collection only when it is missing, creates the vector index only when it is missing, polls until that new index reports `queryable` (up to five minutes, every five seconds), then embeds every item in `memory.seed.json`. An index that already exists is left as it is. Re-run setup after changing the embedding model or dimensions in `agent.config.json`; both invalidate stored vectors.
+
+## Stack
+
+| Piece | What the repo uses |
+|---|---|
+| Runtime | Node.js `>=22.9.0` (the scripts pass Node's `--env-file-if-exists`) |
+| Language | TypeScript, ESM, `"type": "module"`, run with `tsx`. `tsc` is typecheck only (`noEmit`) |
+| Database driver | `mongodb` |
+| Vectors | Voyage HTTP API, model `voyage-4`, 512 dimensions, `output_dtype: int8`, stored as BSON binary via `Binary.fromInt8Array` |
+| Search | MongoDB Atlas `$vectorSearch`, index `tea_vector_index`, path `search.embeddings`, cosine similarity |
+| Answers | Optional OpenAI-compatible chat completions. Default base URL `https://api.openai.com/v1`. Default model name `gpt-5.6-luna` from `agent.config.json` |
+
+Declared ranges are in `package.json`. This tree has no test runner and no CI workflow.
+
+## Architecture
+
+```text
+src/index.ts          prompt, /remember, one-shot --once
+    -> src/agent.ts   retrieve, then chat or retrieval-only text
+         -> src/retrieve.ts
+              -> src/embed.ts    Voyage
+              -> src/db.ts       one shared MongoClient
+         -> src/llm.ts           POST /chat/completions
+scripts/setup.ts      collection, vector index, seed
+src/memory.ts         read memory.seed.json, upsert one fact
+src/config.ts         agent.config.json plus environment variables
+```
+
+`src/db.ts` keeps a single `MongoClient` for the process. `src/retrieve.ts` asks for `numCandidates` of `limit * 15` and a default `limit` of 5. `src/memory.ts` also exports `allMemories()`, which reads documents that have both `key` and `fact`. The CLI never calls it.
+
+Identity, prompt, database names, embedding width, and quest metadata live in `agent.config.json`. Connection strings and API keys are read from the environment in `src/config.ts` and are not written by these scripts.
+
+## Configuration
+
+`agent.config.json` currently sets:
+
+| Field | Value |
+|---|---|
+| Agent | Maggie, face 🤖, model `gpt-5.6-luna` |
+| System prompt | "You are Maggie, a helpful agent with a memory stored in MongoDB Atlas. You answer from what you remember, and you say so plainly when you do not know something." |
+| Custom instructions | empty (omitted from the prompt when blank) |
+| Skills (prompt text only) | `mongodb-fundamentals`, `vector-search`, `agent-memory`, `prompt-context-engineering`, `coding-debugging` |
+| Database | `quests-a7640941cf2c45eaa695aefb` |
+| Collection | `teas` |
+| Index | `tea_vector_index` |
+| Vector path | `search.embeddings` |
+| Embedding | `voyage-4`, 512 dimensions |
+| Quest record | codename Chinchilla-Scout, 4 quests, score 78 |
+
+The CLI prints the agent name, face, collection, database, and index. It does not print the quest score.
+
+Copy `.env.example` to `.env` and supply values. The example file lists names only. `.env` is gitignored.
+
+| Variable | Required | Used for |
+|---|---|---|
+| `MONGODB_URI` | yes | Atlas connection string |
+| `VOYAGE_API_KEY` | yes | Voyage embeddings |
+| `LLM_API_KEY` | no | Turns on chat answers. Unset means retrieval-only output |
+| `LLM_BASE_URL` | no | Chat endpoint. Default `https://api.openai.com/v1` |
+| `LLM_MODEL` | no | Chat model. Default `agent.model` in `agent.config.json` |
+| `DB_NAME` | no | Overrides `database.dbName` |
+
+`MONGODB_URI` and `VOYAGE_API_KEY` are read when `src/config.ts` loads. `npm start`, `npm run ask`, and `npm run setup` all fail immediately if either is missing.
+
+## Setup
+
+Requirements: Node.js 22.9.0 or newer, an Atlas connection string, and a Voyage API key. `$vectorSearch` and `createSearchIndex` in this code target Atlas Vector Search.
 
 ```bash
 npm install
-cp .env.example .env     # fill in MONGODB_URI and VOYAGE_API_KEY
-npm run setup            # creates the collection + vector index, embeds your memories
+cp .env.example .env
+npm run typecheck
+npm run setup
 npm start
 ```
 
-`npm run setup` is idempotent — re-run it whenever you change the embedding model or its
-dimensions, since both invalidate every vector already stored.
+Fill in `.env` before `npm run setup` or `npm start`. `npm run typecheck` does not need those variables.
 
-### About the cluster
+Source comments describe two quest setups. A Pathfinder cluster was one the player already had; setup should find `teas` and `tea_vector_index` and only add memories. A Trailblazer cluster from the event was temporary; point `MONGODB_URI` at a cluster you control and setup creates the collection and index. This repository does not contain a connection string.
 
-This agent reads `quests-a7640941cf2c45eaa695aefb.teas` through the `tea_vector_index` index — the same
-collection and the same index you built during the quest, not a new pair. Your memories are
-stored with their vector at `search.embeddings`, which is the path that index covers, so they
-sit alongside the corpus you indexed and both come back from one search. Ask it something
-about tea and it will tell you; ask it something you taught it and it will tell you that too.
+An index created here is cosine similarity on `search.embeddings` with `numDimensions` taken from `agent.config.json` (512). The definition does not set a quantization mode. Embeddings are stored as int8 BSON binaries.
 
-If you played as a **Pathfinder**, point `MONGODB_URI` at the cluster you already brought.
-Your collection and index are still there and `npm run setup` will find them rather than
-recreate them — the only thing it adds is your memories.
+## Event
 
-If you played as a **Trailblazer**, the cluster you built during the event was temporary. If
-you claimed it, use it. If you did not, create a free one at
-[mongodb.com/atlas](https://mongodb.com/atlas) and point `MONGODB_URI` there; `npm run setup`
-creates the collection and the index from scratch. You start with your memories rather than
-the quest corpus, which is enough to run — add your own data and it gets better.
+Git history has one commit, `022ae99`, authored September 30, 2026, with the message "My agent from the MongoDB quest" and the body "Built by Chinchilla-Scout." The committed `agent.config.json` records the same codename, 4 completed quests, and a score of 78. The initial README said the tree was generated by the MongoDB Quest Platform, with `agent.config.json` and `memory.seed.json` taken from the session.
 
-### Without an LLM key
+The owner built that session in a day-long conference. The repo is the portfolio copy of the result. Nothing here starts a server, and no deployment config is included.
 
-`npm start` works with no `LLM_API_KEY` at all. The agent still embeds your question, still
-runs `$vectorSearch`, and prints the memories it found with their scores. That is the half
-worth seeing anyway — add a key when you want prose instead of a ranked list.
+## Repository layout
 
-Any OpenAI-compatible endpoint works, including a local one:
-
-```bash
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_API_KEY=ollama
-LLM_MODEL=llama3.2
-```
-
-## Talk to it
-
-```
-> what did I learn about numCandidates?
-
-🤖 It controls how many near-neighbours $vectorSearch considers before returning the best
-   few. Ten to twenty times your limit is a reasonable starting point.
-
-   ↳ recalled: num-candidates, vector-search
-```
-
-Teach it something new at any time — it is retrievable on the next question:
-
-```
-> /remember deploy-day We shipped the recommendation service on the 14th.
-```
-
-One-shot, for scripting:
-
-```bash
-npm run ask -- "what do you remember about vector search?"
-```
-
-## What's in here
-
-| File | Does |
+| Path | Role |
 |---|---|
-| `agent.config.json` | Who your agent is, and which collection and index it reads. Generated from your quest. |
-| `memory.seed.json` | Every fact your agent learned. Edit freely, then re-run `npm run setup`. |
-| `src/config.ts` | Pulls the two apart: identity from the JSON, secrets from the environment. |
-| `src/embed.ts` | Text → vector, via Voyage. |
-| `src/retrieve.ts` | The `$vectorSearch` stage you built. |
-| `src/llm.ts` | Chat completions, vendor-neutral. |
-| `src/agent.ts` | Retrieve, ground, answer. |
-| `src/index.ts` | The CLI. |
-| `scripts/setup.ts` | Creates the collection and the vector index, then seeds. |
+| `agent.config.json` | Name, prompt, skills, database, embedding settings, quest metadata |
+| `memory.seed.json` | Seed facts. Currently `[]` |
+| `src/config.ts` | Loads the JSON file and environment variables |
+| `src/index.ts` | CLI |
+| `src/agent.ts` | Retrieve, then answer |
+| `src/retrieve.ts` | `$vectorSearch` |
+| `src/embed.ts` | Voyage embeddings |
+| `src/llm.ts` | OpenAI-compatible chat |
+| `src/memory.ts` | Seed load and upsert |
+| `src/db.ts` | Shared MongoDB client |
+| `scripts/setup.ts` | Collection, vector index, seed |
+| `.env.example` | Environment variable names only |
 
-## Where to take it next
+## Contributors
 
-- **Give it more to remember.** `memory.seed.json` is the cheapest lever — a richer corpus
-  makes retrieval visibly better without touching a line of code.
-- **Tune retrieval.** `numCandidates` and `limit` in `src/retrieve.ts` trade recall against
-  latency, and the right answer depends on your data, not on a rule.
-- **Filter before you search.** `$vectorSearch` takes a `filter` on indexed fields — add one
-  and you have per-user or per-topic memory.
-- **Put a face on it.** The agent is a function from question to answer; a web UI or a Slack
-  bot is a different caller, not a different agent.
+Git history credits one author:
 
----
+- **Shay Bouchles** — initial commit, September 30, 2026 (`022ae99`, "My agent from the MongoDB quest"). The quest codename in that commit and in `agent.config.json` is Chinchilla-Scout.
 
-Generated by the MongoDB Quest Platform. `agent.config.json` and `memory.seed.json` came
-from your session; everything else is the same starting point everyone gets.
+## License
 
-No credentials were written into this repository. The `.env.example` above has placeholders
-only — fill them with your own.
+MIT. The copyright line in `LICENSE` is Copyright (c) 2026 MongoDB, Inc.
